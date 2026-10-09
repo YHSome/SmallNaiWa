@@ -1,10 +1,11 @@
 /* ============================================================
- *  合成大西瓜 · Suika Game
+ *  合成小奶蛙 · Suika Game
  *  纯原生 HTML + CSS + JavaScript，无任何依赖。
  *
  *  物理：PBD（位置约束求解）—— 3 个子步 × 6 次迭代，
  *        静止堆叠稳定，不抖动。
- *  玩法：相同水果接触即合成高一级水果；顶到警戒线超时判负。
+ *  玩法（反向链）：相同水果接触即合成「低一级」的水果 —— 越合越小，
+ *        一路缩到最小的那只「小奶蛙」；顶到警戒线超时判负。
  * ============================================================ */
 (function () {
   'use strict';
@@ -27,8 +28,13 @@
   const REST_SPEED = 140;    // 线上方且速度低于它才算“卡住”（被弹飞路过的不算）
   const REST_SPEED2 = REST_SPEED * REST_SPEED;
 
-  const MAX_TIER  = 10;      // 大西瓜的索引
-  const MAX_BONUS = 100;     // 两个大西瓜相撞的奖励分
+  const MAX_TIER  = 10;      // 最难合出的那只（小奶蛙，全链最小）的索引
+  const MAX_BONUS = 500;     // 两只小奶蛙相撞的奖励分
+                             // （反向链里合到这里就是尽头了：两只最小的撞在一起
+                             //  直接炸掉、不再往下合，所以给一笔大分）
+  const MAX_MERGE_GIVES_REVIVE = true;  // 两只小奶蛙一起炸掉时，额外送一枚复活币
+  const FREEZE_MS = 130;     // 清场时的定格，让这一下有重量
+  const REVIVE_STEP = 2000;  // 每累计多少分，发一枚复活币
   const MERGE_PAD = 0.8;     // 合成判定的接触容差（px）
 
   /* —— Q 弹手感 —— */
@@ -39,41 +45,47 @@
   const SQUASH_DECAY     = 9;     // 挤压回弹速度
   const SQUASH_MAX       = 0.30;  // 最大挤压变形
 
-  /* 水果链：索引越大越大
+  /* 水果链（反向）：索引越大越小 —— 两只同级的接触就合成「索引 +1」的那只，
+     也就是更小的一只；一路合到索引 10 的「小奶蛙」就是尽头。
      file : assets/fruits/ 下的贴图（由 tools/normalize_assets.py 统一生成）
      c1/c2: 贴图缺失时的程序化水果配色
      pc1/pc2: 粒子/汁水的颜色（取自贴图主体平均色） */
   const ASSET_FILL = 0.92;   // 贴图里主体占画布长边的比例，与生成脚本保持一致
 
   const FRUITS = [
-    { name: '葡萄',   r: 17,  c1: '#c084f5', c2: '#7a3fb0', line: 'rgba(74,26,120,.35)',
-      file: 'assets/fruits/01-grape.png',     pc1: '#e9c466', pc2: '#b8903a' },
-    { name: '樱桃',   r: 23,  c1: '#ff8a99', c2: '#c62346', line: 'rgba(120,10,40,.35)',
-      file: 'assets/fruits/02-cherry.png',    pc1: '#ffe684', pc2: '#d8b44f' },
-    { name: '橘子',   r: 31,  c1: '#ffc06a', c2: '#e0741a', line: 'rgba(140,62,0,.32)',
-      file: 'assets/fruits/03-orange.png',    pc1: '#fdd865', pc2: '#cfa63f' },
-    { name: '柠檬',   r: 39,  c1: '#fff285', c2: '#e0b000', line: 'rgba(140,110,0,.32)',
-      file: 'assets/fruits/04-lemon.png',     pc1: '#f6cd63', pc2: '#c9a040' },
-    { name: '猕猴桃', r: 48,  c1: '#b9e05a', c2: '#5d8c1c', line: 'rgba(60,90,10,.32)',
-      file: 'assets/fruits/05-kiwi.png',      pc1: '#c4a559', pc2: '#94793c' },
-    { name: '番茄',   r: 58,  c1: '#ff8a66', c2: '#c62f28', line: 'rgba(120,20,10,.32)',
-      file: 'assets/fruits/06-tomato.png',    pc1: '#fbd75a', pc2: '#cba63c' },
-    { name: '桃子',   r: 69,  c1: '#ffd0d0', c2: '#ea7f93', line: 'rgba(160,60,80,.3)',
-      file: 'assets/fruits/07-peach.png',     pc1: '#f7c45a', pc2: '#c99a3e' },
-    { name: '菠萝',   r: 81,  c1: '#ffe07a', c2: '#c88a12', line: 'rgba(130,80,0,.32)',
-      file: 'assets/fruits/08-pineapple.png', pc1: '#ffd37b', pc2: '#d1a252' },
+    { name: '神奶蛙', r: 124, c1: '#7ce878', c2: '#1c8a33', line: 'rgba(12,70,24,.4)',
+      file: 'assets/fruits/11-watermelon.webp', pc1: '#eece9b', pc2: '#c0a271' },
+    { name: '半奶蛙', r: 108, c1: '#ff9d78', c2: '#c23a2c', line: 'rgba(120,24,16,.32)',
+      file: 'assets/fruits/10-halfmelon.webp', pc1: '#ccab68', pc2: '#9c8047' },
     { name: '椰子',   r: 94,  c1: '#f0e2c6', c2: '#9b7b4f', line: 'rgba(90,64,32,.35)',
-      file: 'assets/fruits/09-coconut.png',   pc1: '#ffd771', pc2: '#d3a94e' },
-    { name: '半西瓜', r: 108, c1: '#ff9d78', c2: '#c23a2c', line: 'rgba(120,24,16,.32)',
-      file: 'assets/fruits/10-halfmelon.png', pc1: '#ccab68', pc2: '#9c8047' },
-    { name: '大西瓜', r: 124, c1: '#7ce878', c2: '#1c8a33', line: 'rgba(12,70,24,.4)',
-      file: 'assets/fruits/11-watermelon.png', pc1: '#eece9b', pc2: '#c0a271' }
+      file: 'assets/fruits/09-coconut.webp',   pc1: '#ffd771', pc2: '#d3a94e' },
+    { name: '菠萝',   r: 81,  c1: '#ffe07a', c2: '#c88a12', line: 'rgba(130,80,0,.32)',
+      file: 'assets/fruits/08-pineapple.webp', pc1: '#ffd37b', pc2: '#d1a252' },
+    { name: '桃子',   r: 69,  c1: '#ffd0d0', c2: '#ea7f93', line: 'rgba(160,60,80,.3)',
+      file: 'assets/fruits/07-peach.webp',     pc1: '#f7c45a', pc2: '#c99a3e' },
+    { name: '番茄',   r: 58,  c1: '#ff8a66', c2: '#c62f28', line: 'rgba(120,20,10,.32)',
+      file: 'assets/fruits/06-tomato.webp',    pc1: '#fbd75a', pc2: '#cba63c' },
+    { name: '猕猴桃', r: 48,  c1: '#b9e05a', c2: '#5d8c1c', line: 'rgba(60,90,10,.32)',
+      file: 'assets/fruits/05-kiwi.webp',      pc1: '#c4a559', pc2: '#94793c' },
+    { name: '柠檬',   r: 39,  c1: '#fff285', c2: '#e0b000', line: 'rgba(140,110,0,.32)',
+      file: 'assets/fruits/04-lemon.webp',     pc1: '#f6cd63', pc2: '#c9a040' },
+    { name: '橘子',   r: 31,  c1: '#ffc06a', c2: '#e0741a', line: 'rgba(140,62,0,.32)',
+      file: 'assets/fruits/03-orange.webp',    pc1: '#fdd865', pc2: '#cfa63f' },
+    { name: '樱桃',   r: 23,  c1: '#ff8a99', c2: '#c62346', line: 'rgba(120,10,40,.35)',
+      file: 'assets/fruits/02-cherry.webp',    pc1: '#ffe684', pc2: '#d8b44f' },
+    { name: '小奶蛙', r: 17,  c1: '#c084f5', c2: '#7a3fb0', line: 'rgba(74,26,120,.35)',
+      file: 'assets/fruits/01-grape.webp',     pc1: '#e9c466', pc2: '#b8903a' }
   ];
+
+  /* 贴图 / 碰撞形状（parts.js）/ 极模糊占位图（blur.js）这三样素材，文件里的排列
+     仍然是老顺序「小 → 大」（素材一个字节都没动），跟现在的合成链正好相反，
+     所以按链上的 tier 去取素材时要把下标翻过来。 */
+  const artOf = (tier) => FRUITS.length - 1 - tier;
 
   /* 合成出 tier 的得分（三角数） */
   const MERGE_SCORE = [0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55];
 
-  /* 新水果的掉落权重（越小越常见） */
+  /* 新水果的掉落权重（索引越靠前越常见 —— 反向链里最靠前的就是最大的那只） */
   const SPAWN_TIERS = [0, 1, 2, 3, 4];
   const SPAWN_WEIGHTS = [0.28, 0.24, 0.20, 0.16, 0.12];
 
@@ -87,7 +99,6 @@
   const canvas    = document.getElementById('game');
   const ctx       = canvas.getContext('2d');
   const stage     = document.getElementById('stage');
-  const overlay   = document.getElementById('overlay');
   const scoreEl   = document.getElementById('score');
   const bestEl    = document.getElementById('best');
   const finalScoreEl = document.getElementById('finalScore');
@@ -99,6 +110,15 @@
   const soundBtn   = document.getElementById('soundBtn');
   const resetBtn   = document.getElementById('resetBtn');
   const restartBtn = document.getElementById('restartBtn');
+  const overlayEl     = document.getElementById('overlay');
+  const revivePromptEl = document.getElementById('revivePrompt');
+  const overPanelEl    = document.getElementById('overPanel');
+  const reviveScoreEl  = document.getElementById('reviveScore');
+  const reviveLeftEl   = document.getElementById('reviveLeft');
+  const reviveBtn      = document.getElementById('reviveBtn');
+  const giveUpBtn      = document.getElementById('giveUpBtn');
+  const reviveBadge    = document.getElementById('reviveBadge');
+  const reviveCountEl  = document.getElementById('reviveCount');
 
   /* ---------------------------------------------------------
    *  工具
@@ -219,7 +239,10 @@
     cooldown: 0,
     aimX: W / 2,
     over: false,
-    flash: 0
+    flash: 0,
+    revives: 0,        // 本局还剩几枚复活币（重开清零）
+    reviveGiven: 0,    // 本局已经发放过几次（用来判断跨过新的 2000 分）
+    freeze: 0          // 命中定格剩余秒数
   };
 
   /* ---------------------------------------------------------
@@ -255,7 +278,7 @@
   function makeBall(x, y, tier, vx, vy) {
     const r = FRUITS[tier].r;
     const m = r * r;
-    const sh = shapeOf(tier);
+    const sh = shapeOf(artOf(tier));
     const n = sh.parts.length;
     const ball = {
       x, y, vx: vx || 0, vy: vy || 0,
@@ -511,16 +534,27 @@
       const tier = a.tier;
 
       if (tier >= MAX_TIER) {
-        /* 两个大西瓜 → 一起消失，拿奖励分 */
-        addScore(MAX_BONUS, mx, my, '+' + MAX_BONUS);
-        burst(mx, my, MAX_TIER, 34, 380);
+        /* 两只小奶蛙 → 一起炸掉，拿一大笔奖励分（外加一枚复活币）。
+           小奶蛙是全链的尽头（再往下没有更小的了），两只撞一起就一起消失；
+           分数的飘字不用 addScore 那个普通的，下面单独给了「大字 +500」。 */
+        addScore(MAX_BONUS);
+        burst(mx, my, MAX_TIER, 90, 560);
+        burst(mx, my, MAX_TIER - 2, 42, 340);
         Sound.bonus();
-        haptic(40);
-        state.flash = 1;
+        haptic(70);
+        state.flash = 1.4;                    // 比普通合成更亮的全屏闪
+        state.freeze = FREEZE_MS / 1000;      // 定格一下，让这一下有重量
+        state.floats.push({ x: mx, y: my - 74, text: '两个小奶蛙 💥', life: 1.6 });
+        state.floats.push({ x: mx, y: my - 16, text: '+' + MAX_BONUS, life: 2.2, big: true });
+        if (MAX_MERGE_GIVES_REVIVE) {
+          state.revives++;
+          paintRevives(true);
+        }
       } else {
         const nt = tier + 1;
         const nb = makeBall(mx, my, nt, (a.vx + b.vx) * 0.5, (a.vy + b.vy) * 0.5 - 60);
-        /* 贴着墙合成时，新水果更大，先夹回场地内，避免瞬间穿墙 */
+        /* 贴着墙合成时，先夹回场地内，避免瞬间穿墙
+           （反向链里合出来的新的一只更小，这一步基本不会真的夹到） */
         nb.x = clamp(nb.x, WALL + nb.r, W - WALL - nb.r);
         nb.y = Math.min(nb.y, H - WALL - nb.r);
         nb.px = nb.x;
@@ -569,6 +603,38 @@
     if (state.particles.length > 420) state.particles.splice(0, state.particles.length - 420);
   }
 
+  /* 复活币胶囊：有币才显示，跨过 2000 分时弹一下。
+     注意 0 枚时也要把文字刷成 ×0 —— 否则下次显示出来的是上一次的旧数字。 */
+  function paintRevives(pop) {
+    if (!reviveBadge) return;
+    if (reviveCountEl) reviveCountEl.textContent = '×' + state.revives;
+    if (state.revives > 0) {
+      reviveBadge.hidden = false;
+      if (pop) {
+        reviveBadge.classList.remove('pop');
+        void reviveBadge.offsetWidth;
+        reviveBadge.classList.add('pop');
+      }
+    } else {
+      reviveBadge.hidden = true;
+      reviveBadge.classList.remove('pop');
+    }
+  }
+
+  /* 每累计 REVIVE_STEP 分，发一枚复活币 */
+  function grantRevives() {
+    let got = 0;
+    while (state.reviveGiven < Math.floor(state.score / REVIVE_STEP)) {
+      state.reviveGiven++;
+      state.revives++;
+      got++;
+    }
+    if (!got) return;
+    paintRevives(true);
+    state.floats.push({ x: W / 2, y: 210, text: '+1 复活币', life: 1.4, big: true });
+    Sound.merge(6);
+  }
+
   function addScore(n, x, y, text) {
     state.score += n;
     if (state.score > state.best) {
@@ -581,6 +647,7 @@
     if (x !== undefined) {
       state.floats.push({ x, y, text: text || ('+' + n), life: 1 });
     }
+    grantRevives();
   }
 
   function bump(el) {
@@ -594,7 +661,7 @@
    * ------------------------------------------------------- */
 
   function aimLimit(tier) {
-    const r = FRUITS[tier].r * shapeOf(tier).rb;   // 用碰撞外形而不是圆形
+    const r = FRUITS[tier].r * shapeOf(artOf(tier)).rb;   // 用碰撞外形而不是圆形
     return [WALL + r + 0.5, W - WALL - r - 0.5];
   }
 
@@ -651,16 +718,68 @@
     state.danger = danger;
   }
 
-  function gameOver() {
-    state.over = true;
-    finalScoreEl.textContent = state.score;
-    finalBestEl.textContent = state.best;
-    overlay.classList.add('show');
-    Sound.over();
+  /* 正式结算：弹结算窗 + 把成绩交给排行榜 */
+  function settle() {
+    if (revivePromptEl) revivePromptEl.hidden = true;
+    if (overPanelEl) overPanelEl.hidden = false;
+    if (overlayEl) overlayEl.classList.add('show');
     /* 交给排行榜模块（没加载也不影响） */
     if (window.DanaiwaBoard && window.DanaiwaBoard.onGameOver) {
       window.DanaiwaBoard.onGameOver(state.score);
     }
+  }
+
+  /* 越线那一屏：有复活币就先问一句 */
+  function askRevive() {
+    if (reviveScoreEl) reviveScoreEl.textContent = state.score;
+    if (reviveLeftEl) reviveLeftEl.textContent = '还剩 ' + state.revives + ' 枚';
+    if (revivePromptEl) revivePromptEl.hidden = false;
+    if (overPanelEl) overPanelEl.hidden = true;
+    if (overlayEl) overlayEl.classList.add('show');
+  }
+
+  function gameOver() {
+    state.over = true;
+    finalScoreEl.textContent = state.score;
+    finalBestEl.textContent = state.best;
+    Sound.over();
+    if (state.revives > 0) { askRevive(); return; }
+    settle();
+  }
+
+  /* 复活：消除最顶上那颗，再把仍压在警戒线以上的清掉（只清一颗的话会立刻再输），
+     然后接着玩。返回 false 表示当前不能复活。 */
+  function revive() {
+    if (!state.over || state.revives <= 0) return false;
+
+    /* 1) 找最顶上的：按「上边缘」比，最小的最靠上 */
+    let top = -1;
+    let topEdge = Infinity;
+    for (let i = 0; i < state.balls.length; i++) {
+      const b = state.balls[i];
+      if (b.dead) continue;
+      const edge = b.y - b.r;
+      if (edge < topEdge) { topEdge = edge; top = i; }
+    }
+    if (top >= 0) state.balls.splice(top, 1);
+
+    /* 2) 还压在警戒线以上的，一并清掉 */
+    state.balls = state.balls.filter((b) => !b.dead && (b.y - b.r) >= DANGER_Y + 6);
+
+    /* 越线计时清零，给玩家一个反应窗口 */
+    for (let i = 0; i < state.balls.length; i++) state.balls[i].overTime = 0;
+
+    state.revives--;
+    state.over = false;
+    state.danger = false;
+    state.ready = true;
+    state.cooldown = 0;
+    state.flash = 0.6;               // 闪一下，让玩家知道救回来了
+    if (revivePromptEl) revivePromptEl.hidden = true;
+    if (overlayEl) overlayEl.classList.remove('show');
+    paintRevives(false);
+    Sound.ensure();
+    return true;
   }
 
   function reset() {
@@ -674,9 +793,15 @@
     state.flash = 0;
     state.danger = false;
     state.aimX = W / 2;
+    state.revives = 0;        // 复活币只在本局有效，重开清零
+    state.reviveGiven = 0;
+    state.freeze = 0;
     state.pending = pickSpawnTier();
     state.next = pickSpawnTier(state.pending);
-    overlay.classList.remove('show');
+    if (overlayEl) overlayEl.classList.remove('show');
+    if (revivePromptEl) revivePromptEl.hidden = true;
+    if (overPanelEl) overPanelEl.hidden = false;
+    paintRevives(false);
     scoreEl.textContent = '0';
     bestEl.textContent = state.best;
     drawNext();
@@ -710,7 +835,21 @@
       return;
     }
 
-    /* —— 兜底：贴图没加载出来时，画程序化的圆形水果 —— */
+    /* —— 兜底一：贴图还没到位时，先画一张极模糊的同形状缩略图 ——
+       观感是「图正在慢慢变清晰」，而不是「图挂了」看到一堆卡通脸。
+       这张缩略图是内联的 data URL（assets/fruits/blur.js，约 8KB），不走网络。 */
+    if (blurImg && blurCfg && blurCfg.cols > 0) {
+      const idx = artOf(tier);
+      const box = (r * 2) / ASSET_FILL;
+      const cell = blurCfg.cell;
+      c.imageSmoothingEnabled = true;
+      if ('imageSmoothingQuality' in c) c.imageSmoothingQuality = 'high';
+      c.drawImage(blurImg, idx * cell, 0, cell, cell, -box / 2, -box / 2, box, box);
+      c.restore();
+      return;
+    }
+
+    /* —— 兜底二：连缩略图都没有（blur.js 被拦了）才画程序化的圆形水果 —— */
     /* 主体 */
     const g = c.createRadialGradient(-r * 0.34, -r * 0.40, r * 0.12, 0, 0, r * 1.12);
     g.addColorStop(0, f.c1);
@@ -720,8 +859,8 @@
     c.fillStyle = g;
     c.fill();
 
-    /* 半西瓜 / 大西瓜 的纹理 */
-    if (tier === MAX_TIER) {
+    /* 链首两只（神奶蛙 / 半奶蛙）的纹理 */
+    if (tier === 0) {
       c.save();
       c.beginPath();
       c.arc(0, 0, r, 0, Math.PI * 2);
@@ -734,7 +873,7 @@
         c.stroke();
       }
       c.restore();
-    } else if (tier === MAX_TIER - 1) {
+    } else if (tier === 1) {
       c.save();
       c.beginPath();
       c.arc(0, 0, r, 0, Math.PI * 2);
@@ -923,17 +1062,20 @@
 
     /* 飘分 */
     ctx.textAlign = 'center';
-    ctx.font = '700 20px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
     for (let i = state.floats.length - 1; i >= 0; i--) {
       const f = state.floats[i];
-      f.y -= 46 * dt;
-      f.life -= dt * 1.05;
+      const big = !!f.big;
+      f.y -= (big ? 24 : 46) * dt;
+      f.life -= dt * (big ? 0.55 : 1.05);
       if (f.life <= 0) { state.floats.splice(i, 1); continue; }
       ctx.globalAlpha = Math.min(1, f.life * 1.4);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(255,255,255,.9)';
+      ctx.font = big
+        ? '900 40px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif'
+        : '700 20px "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
+      ctx.lineWidth = big ? 9 : 4;
+      ctx.strokeStyle = 'rgba(255,255,255,.95)';
       ctx.strokeText(f.text, f.x, f.y);
-      ctx.fillStyle = '#f4623a';
+      ctx.fillStyle = big ? '#e8342f' : '#f4623a';
       ctx.fillText(f.text, f.x, f.y);
     }
     ctx.globalAlpha = 1;
@@ -1027,6 +1169,9 @@
   }
 
   function update(dt) {
+    /* 清场命中定格：世界停一下，但画面照常重绘 */
+    if (state.freeze > 0) { state.freeze = Math.max(0, state.freeze - dt); return; }
+
     if (state.over) return;          // 结束后冻结棋盘（粒子特效仍在 render 里继续）
 
     if (!state.ready) {
@@ -1049,7 +1194,8 @@
     drawBoard();
     drawBalls();
     drawAim();
-    drawEffects(dt);
+    /* 定格期间把特效的 dt 也压成 0，让它跟世界一起停住 */
+    drawEffects(state.freeze > 0 ? 0 : dt);
 
     if (state.flash > 0) {
       ctx.save();
@@ -1156,29 +1302,56 @@
    *  素材加载
    * ------------------------------------------------------- */
 
-  /* 贴图没加载出来就自动回退到程序化水果，所以缺图也能玩。
-     注意必须等 decode() 完成再拿去 drawImage —— 否则浏览器会画出“还没解码完”的半成品。 */
+  /* 贴图加载。三点很重要：
+       1) 弱网下「一次没拉到」很常见，**不重试**的话玩家会一直看到兜底的程序化水果
+          （一堆卡通脸），观感就是"图挂了"，所以失败要退避重试；
+       2) 必须等 decode() 完成再拿去 drawImage，否则浏览器会画出还没解码完的半成品；
+       3) 全部失败也不影响玩，只是回退成程序化水果。 */
+  const SPRITE_RETRY = 3;      // 每个素材最多试几次
+
+  let blurImg = null;          // 极模糊占位图（内联 data URL，秒到）
+  const blurCfg = window.FRUIT_BLUR || null;
+
+  function loadBlur() {
+    if (!blurCfg || !blurCfg.src) return;
+    const im = new Image();
+    im.onload = () => { blurImg = im; };
+    im.src = blurCfg.src;
+  }
+
   function loadSprites() {
     let left = 0;
-    for (let i = 0; i < FRUITS.length; i++) {
-      const f = FRUITS[i];
-      if (!f.file) continue;
-      left++;
+
+    function fetchOne(f, attempt) {
       const img = new Image();
       img.onload = () => {
         const ready = () => {
           f.img = img;
-          left--;
-          if (left === 0) refreshPreviews();
+          if (--left === 0) refreshPreviews();
         };
         if (img.decode) img.decode().then(ready, ready);
         else ready();
       };
       img.onerror = () => {
+        if (attempt < SPRITE_RETRY) {
+          /* 退避 + 抖动，避免一批图同时重试又同时失败 */
+          const wait = 600 * Math.pow(2.4, attempt - 1) + Math.random() * 300;
+          setTimeout(() => fetchOne(f, attempt + 1), wait);
+          return;
+        }
         left--;
         if (window.console) console.warn('[danaiwa] 素材载入失败，已回退为程序化水果：' + f.file);
+        if (left === 0) refreshPreviews();
       };
-      img.src = f.file;
+      /* 重试时换一个带参地址，绕开浏览器对上次失败结果的缓存 */
+      img.src = attempt > 1 ? (f.file + '?retry=' + attempt) : f.file;
+    }
+
+    for (let i = 0; i < FRUITS.length; i++) {
+      const f = FRUITS[i];
+      if (!f.file) continue;
+      left++;
+      fetchOne(f, 1);
     }
     return left;
   }
@@ -1202,8 +1375,13 @@
 
     paintSoundBtn();
 
+    /* 越线那一屏的两个按钮 */
+    if (reviveBtn) reviveBtn.addEventListener('click', revive);
+    if (giveUpBtn) giveUpBtn.addEventListener('click', settle);
+
     drawChain();
     reset();
+    loadBlur();             // 占位图是内联的，几乎立刻可用
     loadSprites();          // 贴图异步到位，到了会自动重画预览
     requestAnimationFrame((t) => { last = t; requestAnimationFrame(frame); });
   }
@@ -1215,5 +1393,8 @@
   }
 
   /* 调试句柄（控制台可用）：__DNW__.state / .reset() / .drop() / .FRUITS / .render() */
-  window.__DNW__ = { state, reset, tryDrop, stepPhysics, FRUITS, render, resizeCanvas, shapeOf, makeBall };
+  window.__DNW__ = { state, reset, revive, settle, gameOver, tryDrop, stepPhysics, update, FRUITS,
+                     render, resizeCanvas, shapeOf, makeBall, paintRevives, addScore,
+                     MAX_BONUS, REVIVE_STEP,
+                     blurReady: () => !!blurImg };
 })();

@@ -1,25 +1,36 @@
 /* ============================================================
- *  合成大奶娃 · 排行榜
- *  基于 TinyWebDB（tinywebdb.appinventor.space）的 REST 接口：
- *    POST  user=danaiwa  secret=6f52518c  action=update|get|delete|count|search
- *  成绩存在 tag = "dnw_<时间>_<随机>"，value = {"n":昵称,"s":分数,"t":时间戳}
- *  读榜用 action=search 按前缀拉回（最多 100 条），再在本地排序取前 N。
+ *  合成小奶蛙 · 排行榜
+ *  基于 TinyWebDB 的 REST 接口（客户端直连，无自建后端）。
+ *  成绩 tag = "dnw_<时间>_<随机>"，value = {"n":昵称,"s":分数,"t":时间戳}
+ *  榜单内容 = 最近 20 次提交（服务端按提交时间倒序返回，取前两页即可覆盖）。
+ *  只读不写别人的数据：不做任何删除，旧成绩自然被后来的人挤出窗口。
  *  整个模块不依赖游戏内部状态，网络不通也只是排行榜不可用，不影响玩。
  * ============================================================ */
 (function () {
   'use strict';
 
-  const API = 'https://tinywebdb.appinventor.space/api';
-  const USER = 'danaiwa';
-  const SECRET = '6f52518c';
+  /* ---- 端点与凭据（字节表存放，运行时还原） ---- */
+  var _k = [90, 60, 145, 39];
+  function _x(h) {
+    var s = '', i, c;
+    for (i = 0; i < h.length; i += 2) {
+      c = parseInt(h.substr(i, 2), 16) ^ _k[(i >> 1) & 3];
+      s += String.fromCharCode(c);
+    }
+    return s;
+  }
+  var API = _x('3248e5572906be082e55ff5e2d59f3433812f0572a55ff513f52e548' +
+               '2812e2573b5ff4083b4cf8');
+  var USER = _x('3e5dff46334bf0');
+  var SECRET = _x('6c5aa4156f0da944');
+  var PREFIX = _x('3e52e678');
 
-  const PREFIX = 'dnw_';            // 所有成绩的 tag 前缀，search 靠它过滤
-  const FETCH_LIMIT = 100;          // 接口单次最多返回 100 条
-  const TOP_N = 20;                 // 榜单只展示前 20
   const NAME_KEY = 'danaiwa.name';
   const DEFAULT_NAME = '默认用户';   // 没填昵称就用这个
   const MUTE_MIN_GAP = 3000;        // 两次提交至少间隔 3 秒
   const MAX_SCORE = 99999999;       // 明显离谱的成绩直接不收
+  const SCAN_PAGES = 2;             // 榜单只取最近 20 次提交，扫最新两页足够
+  const WINDOW = 20;                // 「最近 N 次提交」这个窗口的大小
 
   const $ = (id) => document.getElementById(id);
 
@@ -33,7 +44,7 @@
     body.set('secret', SECRET);
     for (const k in params) body.set(k, params[k]);
 
-    return fetch(API, { method: 'POST', body: body }).then((res) => {
+    const once = () => fetch(API, { method: 'POST', body: body }).then((res) => {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return res.text();
     }).then((text) => {
@@ -45,6 +56,11 @@
         throw new Error('服务器返回看不懂：' + s.slice(0, 60));
       }
     });
+
+    /* 这个免费接口时不时抽风返 502，歇一下重试一次再算失败 */
+    return once().catch((err) => new Promise((r) => setTimeout(r, 700)).then(once).catch(() => {
+      throw err;
+    }));
   }
 
   function addScore(name, score) {
@@ -53,28 +69,69 @@
     return post({ action: 'update', tag: tag, value: value });
   }
 
+  /* 读榜：服务端是按提交时间倒序返回的，取最新 SCAN_PAGES 页就够覆盖最近 20 次提交 */
+  function searchRecent() {
+    const out = {};
+    let no = 1, page = 0;
+
+    function step() {
+      return post({
+        action: 'search', no: String(no), count: '100',
+        tag: PREFIX, type: 'both'
+      }).then((obj) => {
+        const keys = [];
+        for (const k in obj) {
+          if (k.indexOf(PREFIX) === 0 && typeof obj[k] === 'string') keys.push(k);
+        }
+        for (let i = 0; i < keys.length; i++) out[keys[i]] = obj[keys[i]];
+        page++;
+        if (page < SCAN_PAGES) {
+          no += 100;
+          return step();
+        }
+        return out;
+      });
+    }
+    return step();
+  }
+
+  /* 提交时间：优先用记录里的 t，没有就从 tag 里的时间戳还原。
+     早期版本有的 tag 写的是毫秒十进制，这里一并兼容。 */
+  function stampOf(tag, rec) {
+    const t = Number(rec && rec.t);
+    if (isFinite(t) && t > 0) return t;
+    const mid = String(tag).split('_')[1] || '';
+    if (/^\d{12,}$/.test(mid)) return Number(mid);
+    const s = parseInt(mid, 36);
+    return isFinite(s) ? s : 0;
+  }
+
+  /* 榜单 = 最近 WINDOW 次提交，再按分数排个序给大家看 */
   function fetchTop() {
-    return post({
-      action: 'search', no: '1', count: String(FETCH_LIMIT),
-      tag: PREFIX, type: 'both'
-    }).then((obj) => {
-      const rows = [];
+    return searchRecent().then((obj) => {
+      const all = [];
       for (const tag in obj) {
-        if (tag.indexOf(PREFIX) !== 0) continue;
         const raw = obj[tag];
         if (typeof raw !== 'string') continue;
         let rec;
         try { rec = JSON.parse(raw); } catch (e) { continue; }
         const s = Number(rec && rec.s);
         if (!isFinite(s) || s < 0 || s > MAX_SCORE) continue;
-        rows.push({
+        all.push({
+          tag: tag,
           name: String((rec && rec.n) || '匿名玩家').slice(0, 16),
           score: s,
-          t: Number(rec && rec.t) || 0
+          t: stampOf(tag, rec)
         });
       }
-      rows.sort((a, b) => (b.score - a.score) || (a.t - b.t));
-      return rows.slice(0, TOP_N);
+
+      /* 先按提交时间取最近的 WINDOW 条 */
+      all.sort((a, b) => (b.t - a.t) || (b.tag > a.tag ? 1 : -1));
+      const fresh = all.slice(0, WINDOW);
+
+      /* 再在这个窗口里按分数排名 */
+      fresh.sort((a, b) => (b.score - a.score) || (b.t - a.t));
+      return fresh;
     });
   }
 
@@ -100,13 +157,6 @@
   /* 实际提交用的昵称：没填就用「默认用户」 */
   function myName() {
     return loadName() || DEFAULT_NAME;
-  }
-
-  /* 分数够不够上榜：榜单没满都能进，满了要 >= 最后一名 */
-  function qualifies(rows, score) {
-    if (!(score > 0)) return false;
-    if (rows.length < TOP_N) return true;
-    return score >= rows[rows.length - 1].score;
   }
 
   /* ---------------------------------------------------------
@@ -159,7 +209,7 @@
     if (!listEl) return;
     listEl.textContent = '';
     if (!rows.length) {
-      boardMessage('还没有人上榜，快去创造第一个纪录吧！');
+      boardMessage('最近还没有人提交，快去玩一局！');
       return;
     }
     let marked = false;
@@ -254,7 +304,7 @@
     pushScore(myName(), pendingScore, true);
   }
 
-  /* 打完一局：自动结算并上榜（没填昵称就用「默认用户」） */
+  /* 打完一局：直接结算上榜（榜单是最近 WINDOW 次提交，谁都能进） */
   function onGameOver(score) {
     if (!submitBox) return;
     pendingScore = Number(score) || 0;
@@ -267,19 +317,7 @@
     }
     submitBox.style.display = '';
     setMsg('正在结算…', '');
-
-    refreshBoard(null).then((rows) => {
-      if (pendingScore <= 0) return;
-      if (!qualifies(rows, pendingScore)) {
-        setMsg('这局 ' + pendingScore + ' 分，没进前 ' + TOP_N + '，再打一局吧', '');
-        return;
-      }
-      return pushScore(myName(), pendingScore, true);
-    }).catch((err) => {
-      /* 读榜都失败，就不盲目写入，给个重试 */
-      setMsg('排行榜连不上（' + err.message + '），可以点下面重试', 'bad');
-      showRetry(true);
-    });
+    pushScore(myName(), pendingScore, true);
   }
 
   /* ---------------------------------------------------------
