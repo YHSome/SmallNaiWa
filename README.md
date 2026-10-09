@@ -128,6 +128,7 @@ python -m http.server 8080
 | 项 | 值 |
 | --- | --- |
 | 接口 | `POST https://tinywebdb.appinventor.space/api` |
+| 库 | **小奶蛙专用**的一套 user/secret（和大奶娃那套是两个独立的库，成绩互不混） |
 | 账号 | `user` / `secret` 以编码形式存在，运行时还原 |
 | 用到的 action | `update`（写）、`search`（按 tag 前缀读） |
 | tag | `dnw_<时间戳36进制>_<随机4位>` |

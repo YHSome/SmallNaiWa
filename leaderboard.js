@@ -21,8 +21,8 @@
   }
   var API = _x('3248e5572906be082e55ff5e2d59f3433812f0572a55ff513f52e548' +
                '2812e2573b5ff4083b4cf8');
-  var USER = _x('3e5dff46334bf0');
-  var SECRET = _x('6c5aa4156f0da944');
+  var USER = _x('2255f048345df8503b');
+  var SECRET = _x('6908a743620ca614');
   var PREFIX = _x('3e52e678');
 
   const NAME_KEY = 'danaiwa.name';
