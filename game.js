@@ -52,41 +52,28 @@
      pc1/pc2: 粒子/汁水的颜色（取自贴图主体平均色） */
   const ASSET_FILL = 0.92;   // 贴图里主体占画布长边的比例，与生成脚本保持一致
 
-  /* 半径梯子：索引 0 最大、10 最小，中间等比铺开。
-     原来是直接写死 17..124 的 —— 那是「越合越大」的尺寸：最大那只只是终点，
-     平时根本见不到。现在是反向链，最大的那几只反而是**投放的主力**，
-     一块神奶蛙直径 248px、棋盘才 400px 宽，开局十几手就判负；
-     所以整条链压扁成 R_MIN..R_MAX（相邻两级 1.16 倍，配上 11 张不同的贴图，
-     尺寸和样子都还能一眼分清）。
-     想整体调大调小只改 R_MAX，想改「大跟小差多少」就改 R_MIN。 */
-  const R_MIN = 17;
-  const R_MAX = 74;
-  /* → 74 / 64 / 55 / 48 / 41 / 35 / 31 / 26 / 23 / 20 / 17 */
-  const RADIUS = [];
-  for (let i = 0; i < 11; i++) RADIUS.push(Math.round(R_MAX * Math.pow(R_MIN / R_MAX, i / 10)));
-
   const FRUITS = [
-    { name: '神奶蛙', r: RADIUS[0],  c1: '#7ce878', c2: '#1c8a33', line: 'rgba(12,70,24,.4)',
+    { name: '神奶蛙', r: 124, c1: '#7ce878', c2: '#1c8a33', line: 'rgba(12,70,24,.4)',
       file: 'assets/fruits/11-watermelon.webp', pc1: '#eece9b', pc2: '#c0a271' },
-    { name: '半奶蛙', r: RADIUS[1],  c1: '#ff9d78', c2: '#c23a2c', line: 'rgba(120,24,16,.32)',
+    { name: '半奶蛙', r: 108, c1: '#ff9d78', c2: '#c23a2c', line: 'rgba(120,24,16,.32)',
       file: 'assets/fruits/10-halfmelon.webp', pc1: '#ccab68', pc2: '#9c8047' },
-    { name: '椰子',   r: RADIUS[2],  c1: '#f0e2c6', c2: '#9b7b4f', line: 'rgba(90,64,32,.35)',
+    { name: '椰子',   r: 94,  c1: '#f0e2c6', c2: '#9b7b4f', line: 'rgba(90,64,32,.35)',
       file: 'assets/fruits/09-coconut.webp',   pc1: '#ffd771', pc2: '#d3a94e' },
-    { name: '菠萝',   r: RADIUS[3],  c1: '#ffe07a', c2: '#c88a12', line: 'rgba(130,80,0,.32)',
+    { name: '菠萝',   r: 81,  c1: '#ffe07a', c2: '#c88a12', line: 'rgba(130,80,0,.32)',
       file: 'assets/fruits/08-pineapple.webp', pc1: '#ffd37b', pc2: '#d1a252' },
-    { name: '桃子',   r: RADIUS[4],  c1: '#ffd0d0', c2: '#ea7f93', line: 'rgba(160,60,80,.3)',
+    { name: '桃子',   r: 69,  c1: '#ffd0d0', c2: '#ea7f93', line: 'rgba(160,60,80,.3)',
       file: 'assets/fruits/07-peach.webp',     pc1: '#f7c45a', pc2: '#c99a3e' },
-    { name: '番茄',   r: RADIUS[5],  c1: '#ff8a66', c2: '#c62f28', line: 'rgba(120,20,10,.32)',
+    { name: '番茄',   r: 58,  c1: '#ff8a66', c2: '#c62f28', line: 'rgba(120,20,10,.32)',
       file: 'assets/fruits/06-tomato.webp',    pc1: '#fbd75a', pc2: '#cba63c' },
-    { name: '猕猴桃', r: RADIUS[6],  c1: '#b9e05a', c2: '#5d8c1c', line: 'rgba(60,90,10,.32)',
+    { name: '猕猴桃', r: 48,  c1: '#b9e05a', c2: '#5d8c1c', line: 'rgba(60,90,10,.32)',
       file: 'assets/fruits/05-kiwi.webp',      pc1: '#c4a559', pc2: '#94793c' },
-    { name: '柠檬',   r: RADIUS[7],  c1: '#fff285', c2: '#e0b000', line: 'rgba(140,110,0,.32)',
+    { name: '柠檬',   r: 39,  c1: '#fff285', c2: '#e0b000', line: 'rgba(140,110,0,.32)',
       file: 'assets/fruits/04-lemon.webp',     pc1: '#f6cd63', pc2: '#c9a040' },
-    { name: '橘子',   r: RADIUS[8],  c1: '#ffc06a', c2: '#e0741a', line: 'rgba(140,62,0,.32)',
+    { name: '橘子',   r: 31,  c1: '#ffc06a', c2: '#e0741a', line: 'rgba(140,62,0,.32)',
       file: 'assets/fruits/03-orange.webp',    pc1: '#fdd865', pc2: '#cfa63f' },
-    { name: '樱桃',   r: RADIUS[9],  c1: '#ff8a99', c2: '#c62346', line: 'rgba(120,10,40,.35)',
+    { name: '樱桃',   r: 23,  c1: '#ff8a99', c2: '#c62346', line: 'rgba(120,10,40,.35)',
       file: 'assets/fruits/02-cherry.webp',    pc1: '#ffe684', pc2: '#d8b44f' },
-    { name: '小奶蛙', r: RADIUS[10], c1: '#c084f5', c2: '#7a3fb0', line: 'rgba(74,26,120,.35)',
+    { name: '小奶蛙', r: 17,  c1: '#c084f5', c2: '#7a3fb0', line: 'rgba(74,26,120,.35)',
       file: 'assets/fruits/01-grape.webp',     pc1: '#e9c466', pc2: '#b8903a' }
   ];
 
