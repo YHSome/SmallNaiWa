@@ -129,7 +129,7 @@ function check(name, ok, detail) {
 }
 
 /* ---- 1. 落地球的自由回弹高度 ---- */
-console.log('[1] 单个水果(猕猴桃 r=48) 从 y=100 落到地面');
+console.log('[1] 单个水果(猕猴桃 r=31) 从 y=100 落到地面');
 clear();
 S.balls.push(ball(210, 6, 100));
 const floorY = H - WALL - R[6];
@@ -147,7 +147,7 @@ check('首次回弹高度 > 40px', rebound > 40, '回弹高度 = ' + rebound.toF
 check('最终静止（不抖）', Math.abs(S.balls[0].vy) < 20, 'vy = ' + S.balls[0].vy.toFixed(2));
 
 /* ---- 2. 球对球回弹（不同级别） ---- */
-console.log('[2] 橘子(r=31) 砸向静止的椰子(r=94)');
+console.log('[2] 橘子(r=23) 砸向静止的椰子(r=55)');
 clear();
 S.balls.push(ball(210, 2, 700 - WALL - R[2]));
 S.balls.push(ball(210, 8, 180));
